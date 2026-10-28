@@ -1,0 +1,43 @@
+@inherits LayoutComponentBase
+@implements IAsyncDisposable
+@inject HttpClient Http
+<nav class="mona-nav" aria-label="Mona pages">
+    <NavLink href="" Match="NavLinkMatch.All">Visual</NavLink>
+    <NavLink href="sources" @onclick="ClearNotice">
+        <span>Sources</span>
+        @if (newCount > 0) { <span class="capture-badge">@newCount new</span> }
+    </NavLink>
+    <button class="extension-button" title="Open files in File Explorer" aria-label="Open files in File Explorer" @onclick="OpenFolder"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align:-2px;margin-right:5px"><path d="M14 3h7v7M21 3 10 14M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" /></svg>Files</button>
+    <span class="nav-status" role="status">@message</span>
+</nav>
+@Body
+
+@code {
+    private HashSet<string>? known;
+    private int newCount;
+    private string? message;
+    private readonly CancellationTokenSource stopping = new();
+    protected override async Task OnInitializedAsync() { await CheckCaptures(); _ = Poll(); }
+    private async Task Poll() {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try { while (await timer.WaitForNextTickAsync(stopping.Token)) await InvokeAsync(async () => { await CheckCaptures(); StateHasChanged(); }); }
+        catch (OperationCanceledException) { }
+    }
+    private async Task CheckCaptures() {
+        try {
+            using var data = System.Text.Json.JsonDocument.Parse(await Http.GetStringAsync("api/captures"));
+            var ids = data.RootElement.EnumerateArray().Select(item => item.GetProperty("id").GetString() ?? "").ToHashSet();
+            if (known is not null) { var added = ids.Except(known).Count(); if (added > 0) { newCount += added; message = added == 1 ? "New source" : $"{added} new sources"; } }
+            known = ids;
+        } catch (Exception) { }
+    }
+    private void ClearNotice() { newCount = 0; message = null; }
+    private async Task OpenFolder() {
+        try {
+            var response = await Http.PostAsync("api/open-browser-extension", null);
+            message = response.IsSuccessStatusCode ? null : "Could not open Mona’s Mind folder.";
+        }
+        catch (Exception) { message = "Could not reach the local app to open its folder."; }
+    }
+    public ValueTask DisposeAsync() { stopping.Cancel(); stopping.Dispose(); return ValueTask.CompletedTask; }
+}

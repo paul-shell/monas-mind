@@ -1,0 +1,134 @@
+@page "/sources"
+@page "/captures"
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+
+<PageTitle>Sources · Mona</PageTitle>
+<main class="captures-page">
+    @if (message is not null) { <p role="status">@message</p> }
+    @if (captures.Count == 0 && message is null) { <p class="captures-empty">No sources yet.</p> }
+    <div class="capture-list" aria-label="Saved sources">
+        @foreach (var item in captures)
+        {
+            <div class="capture-row" @key="item.Id">
+                <button class="capture-open" @onclick="() => Open(item)">
+                    <span class="capture-main">
+                        <span class="capture-title">@item.Title</span>
+                        <span class="capture-meta">
+                            <time datetime="@item.Created.ToString("O")">@item.Created.ToLocalTime().ToString("g")</time>
+                            <span class="source-link @SourceKind(item.Url)">
+                                @if (item.Favicon is not null) { <img class="source-favicon" src="@IconUrl(item.Favicon)" alt="" /> }
+                                <span class="capture-url">@item.Url</span>
+                            </span>
+                        </span>
+                    </span>
+                </button>
+                <button class="capture-remove" aria-label="@($"Remove {item.Title} from list")" title="Remove from list" @onclick="() => ConfirmRemoval(item)">×</button>
+            </div>
+        }
+    </div>
+    @if (pendingRemoval is not null)
+    {
+        <dialog @ref="removeDialog" class="capture-dialog" aria-labelledby="remove-dialog-title">
+            <header><h2 id="remove-dialog-title">Remove source?</h2></header>
+            <p>Remove “@pendingRemoval.Title” from Sources? Saved files will be kept.</p>
+            <button data-close-modal @onclick="CancelRemoval">Cancel</button>
+            <button @onclick="() => Remove(pendingRemoval)" disabled="@removing">Remove source</button>
+        </dialog>
+    }
+    @if (selected is not null)
+    {
+        <dialog @ref="dialog" class="capture-dialog" aria-labelledby="capture-dialog-title">
+            <header><h2 id="capture-dialog-title">@selected.Title</h2><button data-close-modal aria-label="Close note" title="Close" @onclick="Close">×</button></header>
+            <a class="source-link @SourceKind(selected.Url)" href="@selected.Url" target="_blank" rel="noopener noreferrer">
+                @if (selected.Favicon is not null) { <img class="source-favicon" src="@IconUrl(selected.Favicon)" alt="" /> }
+                @selected.Url
+            </a>
+            <time datetime="@selected.Created.ToString("O")">@selected.Created.ToLocalTime().ToString("g")</time>
+            <pre>@selected.Markdown</pre>
+        </dialog>
+    }
+</main>
+
+@code {
+    private sealed record Capture(string Id, string Title, string Url, DateTimeOffset Created, string Markdown, string? Favicon);
+    private string IconUrl(string path) => new Uri(Http.BaseAddress!, path).ToString();
+    private static string SourceKind(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Host.Equals("youtu.be", StringComparison.OrdinalIgnoreCase) || uri.Host.Equals("youtube.com", StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith(".youtube.com", StringComparison.OrdinalIgnoreCase)) ? "youtube-source" : "web-source";
+    [SupplyParameterFromQuery(Name = "source")] public string? SourceId { get; set; }
+    private bool linkedSourceOpened;
+    private List<Capture> captures = [];
+    private Capture? selected;
+    private string? message;
+    private ElementReference dialog;
+    private IJSObjectReference? module;
+    private bool openDialog;
+    private Capture? pendingRemoval;
+    private ElementReference removeDialog;
+    private bool openRemoveDialog;
+    private bool removing;
+    private void ConfirmRemoval(Capture item) { pendingRemoval = item; openRemoveDialog = true; }
+    private void CancelRemoval() { pendingRemoval = null; openRemoveDialog = false; }
+    private readonly CancellationTokenSource stopping = new();
+    protected override async Task OnInitializedAsync() { await Refresh(); _ = Poll(); }
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (openRemoveDialog && pendingRemoval is not null) {
+            openRemoveDialog = false;
+            try {
+                module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./capture-modal.js");
+                await module.InvokeVoidAsync("open", removeDialog);
+            } catch (JSException) {
+                CancelRemoval();
+                message = "Could not open the confirmation. Nothing was removed.";
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        if (openDialog && selected is not null) {
+            openDialog = false;
+            try {
+                module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./capture-modal.js");
+                await module.InvokeVoidAsync("open", dialog);
+            } catch (JSException) {
+                selected = null;
+                message = "Could not open the note.";
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+    private async Task Poll() {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        try { while (await timer.WaitForNextTickAsync(stopping.Token)) await InvokeAsync(async () => { await Refresh(); StateHasChanged(); }); }
+        catch (OperationCanceledException) { }
+    }
+    private async Task Refresh() {
+        try {
+            using var data = System.Text.Json.JsonDocument.Parse(await Http.GetStringAsync("api/captures"));
+            captures = data.RootElement.EnumerateArray().Select(item => new Capture(
+                item.GetProperty("id").GetString() ?? "", item.GetProperty("title").GetString() ?? "",
+                item.GetProperty("url").GetString() ?? "", item.GetProperty("created").GetDateTimeOffset(),
+                item.GetProperty("markdown").GetString() ?? "",
+                item.TryGetProperty("favicon", out var icon) ? icon.GetString() : null)).ToList();
+            message = null;
+            if (!linkedSourceOpened && SourceId is not null) {
+                var linked = captures.FirstOrDefault(item => item.Id == SourceId);
+                if (linked is not null) { Open(linked); linkedSourceOpened = true; }
+            }
+        }
+        catch (Exception) { message = "Cannot reach the capture service. Check that the local capture host is running; retrying automatically."; }
+    }
+    private void Open(Capture item) { selected = item; openDialog = true; }
+    private void Close() { selected = null; }
+    private async Task Remove(Capture? item) {
+        if (item is null || removing) return;
+        removing = true;
+        CancelRemoval();
+        try {
+            var response = await Http.PostAsync($"api/captures/{item.Id}/hide", null);
+            if (!response.IsSuccessStatusCode) { message = "Could not remove source from the list."; return; }
+            captures.RemoveAll(capture => capture.Id == item.Id);
+        } catch (Exception) { message = "Could not remove source from the list."; }
+        finally { removing = false; }
+    }
+    public async ValueTask DisposeAsync() { stopping.Cancel(); if (module is not null) await module.DisposeAsync(); stopping.Dispose(); }
+}

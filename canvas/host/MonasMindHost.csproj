@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoDefaultLaunchSettingsFile>True</NoDefaultLaunchSettingsFile>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(BundleWebAssets)' == 'true'">
+    <EmbeddedResource Include="..\..\.local\publish\wwwroot\**\*">
+      <LogicalName>web/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

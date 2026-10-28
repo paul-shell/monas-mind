@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Mona's Mind",
+  "version": "0.1.1",
+  "description": "Capture the current page into the open Mona canvas.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqyARAuYiTSRmb7wxboTuPSyLq/+buonhJbU1uTDrs17tjTN4oZ8gWC/1DiS0aYKPZDIIx7dttngRtDWXzYoti5PyxoAGEIuhCpR5D6vA+N1v425YbL47Bv8+vD8ob9WxZZU/XMopO4MjZr1REnMXA1SX+GlP46NQbQZbOYfRKumZGRYWsp7BcBrzqBxwYemat6Py0auFP7k5ahou4ITDLGsbjPM7bUJMgZCzEGiHQM7aFwKsX2xMo3izF8gC5jx9cn5YS0QN9MzvlO8NPuAOSnHGReg5YtbF8scsYchL//wYLagfCVWkNLM1UoT5DqJIZ+shGoG3NDNT1ZW+ReadLwIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:47633/*"
+  ],
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "action": {
+    "default_title": "Mona's Mind",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}
